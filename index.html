@@ -1,0 +1,280 @@
+
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <title></title>
+    <script src="three.js" charset="utf-8"></script>
+    <script src="dat.gui.js" charset="utf-8"></script>
+    <script src="OrbitControls.js" charset="utf-8"></script>
+    <script src="lie_calculation.js" charset="utf-8"></script>
+
+    <script type="text/javascript">
+
+    var scene = null;
+    var camera = null;
+    var renderer = null;
+
+    //controls for orbitcontrol
+    var controls = null;
+
+    var material = null;
+    var t1 = null;
+    var t2 = null;
+    var intermediate_tetrahedron = null;
+    var intermediate_frames = null;
+
+    // colors
+    var red = new THREE.Color(1, 0, 0);
+    var green = new THREE.Color(0, 1, 0);
+    var blue = new THREE.Color(0, 0, 1);
+    var black = new THREE.Color(0, 0, 0);
+
+
+    // the t2 matrix
+    var t2_mat;
+    // scale vector
+    var s_vec;
+
+    // se mat
+    var se_mat;
+    // scale matrix
+    var sc_mat;
+
+    var id = null;
+    var alpha = 0;
+
+    function init(){
+
+      renderer = new THREE.WebGLRenderer({
+        canvas: document.getElementById('mainCanvas')
+      });
+
+      scene = new THREE.Scene();
+      renderer.setClearColor(0xffffff);
+
+      drawAxes(scene);
+
+      var light = new THREE.PointLight(0xffffff);
+      light.position.set(3, 2, 5);
+      scene.add(light);
+
+
+      camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 100);
+      camera.position.set(5, 15, 25);
+      camera.lookAt(new THREE.Vector3(0, 0, 0));
+      scene.add(camera);
+
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+
+      material = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        vertexColors: THREE.FaceColors
+      });
+
+
+      var t1geometry = new THREE.TetrahedronGeometry(1, 0);
+
+      // colors
+      var colors = [red, green, blue, black];
+      for (var i = 0; i < 4; i++) {
+          t1geometry.faces[i].color = colors[i];
+      }
+
+      t1 = new THREE.Mesh(t1geometry, material);
+      scene.add(t1);
+
+      var geometry2 = new THREE.TetrahedronGeometry(1, 0);
+      for (var i = 0; i < 4; i++) {
+          geometry2.faces[i].color = colors[i];
+      }
+
+      t2 = new THREE.Mesh(geometry2, material);
+      scene.add(t2);
+
+      var gui = new dat.GUI();
+
+      var f1 = gui.addFolder('Location');
+      f1.add(t2_control,'x', -10, 10, 0.01).onChange(render_for_t2_control);
+      f1.add(t2_control,'y', -10, 10, 0.01).onChange(render_for_t2_control);
+      f1.add(t2_control,'z', -10, 10, 0.01).onChange(render_for_t2_control);
+      f1.open();
+
+      var f2 = gui.addFolder('Rotaion');
+      f2.add(t2_control,'rotatex', 0, 360, 1).onChange(render_for_t2_control);
+      f2.add(t2_control,'rotatey', 0, 360, 1).onChange(render_for_t2_control);
+      f2.add(t2_control,'rotatez', 0, 360, 1).onChange(render_for_t2_control);
+      f2.open();
+
+
+      var f3 = gui.addFolder('Scale');
+      f3.add(t2_control,'scalex', 0.3, 2.0, 0.1).onChange(render_for_t2_control);
+      f3.add(t2_control,'scaley', 0.3, 2.0, 0.1).onChange(render_for_t2_control);
+      f3.add(t2_control,'scalez', 0.3, 2.0, 0.1).onChange(render_for_t2_control);
+      f3.open();
+
+      document.getElementById('middle_frame').addEventListener('change', render_for_t2_control);
+
+      render_for_t2_control();
+      animate();
+
+    }
+
+    var t2_control = new function(){
+      this.x = 10;
+      this.y = 5;
+      this.z = 5;
+
+      this.rotatex = 0;
+      this.rotatey = 0;
+      this.rotatez = 0;
+
+      this.scalex = 1;
+      this.scaley = 1;
+      this.scalez = 1;
+    }
+
+    function render_for_t2_control(){
+
+      t2.position.x = t2_control.x;
+      t2.position.y = t2_control.y;
+      t2.position.z = t2_control.z;
+
+      t2.rotation.x = t2_control.rotatex / 180 * Math.PI;
+      t2.rotation.y = t2_control.rotatey / 180 * Math.PI;
+      t2.rotation.z = t2_control.rotatez / 180 * Math.PI;
+
+      var t2xs = t2_control.scalex;
+      var t2ys = t2_control.scaley;
+      var t2zs = t2_control.scalez;
+
+      t2.scale.set(t2xs, t2ys, t2zs);
+
+
+
+      t2_mat = t2.matrixWorld;
+      se_mat = new THREE.Matrix4();
+      se_mat.extractRotation(t2_mat);
+      s_vec = t2.scale;
+
+      se_mat.setPosition(t2.position);
+
+
+      sc_mat = new THREE.Matrix4();
+      sc_mat.elements[0] = t2xs;
+      sc_mat.elements[5] = t2ys;
+      sc_mat.elements[10] = t2zs;
+      sc_mat.elements[5] = 1;
+
+
+      scene.remove( intermediate_frames );
+      intermediate_frames = null;
+      if (document.getElementById('middle_frame').checked) {
+        // Stores intermediate frames
+        intermediate_frames = new THREE.Group();
+        let N = 5;
+        for( var i = 0; i < N; ++i ) {
+          let alpha = i/(N-1);
+          intermediate_frames.add( generate_intermediate_tetrahedron( alpha ) );
+        }
+        scene.add(intermediate_frames);
+      }
+
+      // animate();
+
+      // delete the two lines below will make middle_frame not working
+      renderer.render(scene, camera);
+      // requestAnimationFrame(render_for_t2_control);
+    }
+
+    function drawAxes(scene) {
+
+      var origin = new THREE.Vector3( 0, 0, 0 );
+      var length = 10;
+
+      // x-axis
+      var xdir = new THREE.Vector3(1, 0, 0)
+      var xAxis = new THREE.ArrowHelper(xdir, origin, length, red);
+      scene.add(xAxis);
+
+      // y-axis
+      var ydir = new THREE.Vector3(0, 1, 0);
+      var yAxis = new THREE.ArrowHelper(ydir, origin, length, green);
+      scene.add(yAxis);
+
+      // z-axis
+      var zdir = new THREE.Vector3(0, 0, 1);
+      var zAxis = new THREE.ArrowHelper(zdir, origin, length, blue);
+      scene.add(zAxis);
+    }
+
+    function animate() {
+
+      if (t2_mat.determinant() < 0) {
+        document.getElementById('text').innerText = "Not a orientation-preserving affine transformation.<br/>"
+        // return ;
+      }
+
+
+
+
+
+      if( intermediate_tetrahedron !== null ) {
+        scene.remove( intermediate_tetrahedron );
+      }
+      let duration = 2.0;
+      let now = new Date().getTime() / 1000;
+      // Slow down time so 1 second equals duration.
+      now /= duration;
+      // Repeat every duration.
+      alpha = now % 1;
+
+      intermediate_tetrahedron = generate_intermediate_tetrahedron( alpha );
+      scene.add( intermediate_tetrahedron );
+
+      renderer.render(scene, camera);
+      controls.update();
+
+      requestAnimationFrame(animate);
+    }
+
+    function generate_intermediate_tetrahedron( alpha ) {
+      let intermediate_tetrahedron = t1.clone();
+
+      var logr = logarithm_map_se(se_mat);
+      var logrr = logr.clone();
+      logrr.multiplyScalar(alpha);
+
+      // scale matrix
+      var logsc = logarithm_map_sc(sc_mat);
+      var logscc = logsc.clone();
+      logscc.multiplyScalar(alpha);
+
+      var explogsc = exponential_map_sc(logscc);
+
+      var t_mat_alpha = exponential_map_se(logrr);
+
+      var cur_t1_mat = intermediate_tetrahedron.matrixWorld;
+      var cur_inv = new THREE.Matrix4();
+      cur_inv.getInverse(cur_t1_mat);
+
+      explogsc.multiply(cur_inv);
+      t_mat_alpha.multiply(explogsc);
+      intermediate_tetrahedron.applyMatrix(t_mat_alpha);
+
+      return intermediate_tetrahedron;
+    }
+
+
+
+    </script>
+  </head>
+  <body onload="init()">
+    <canvas id="mainCanvas" width="800" height="800"></canvas>
+    <br>
+    <label><input id= "middle_frame" type="checkbox"> Middle Frame Showing</label><br>
+    <p id="text"> text </p>
+
+  </body>
+</html>
